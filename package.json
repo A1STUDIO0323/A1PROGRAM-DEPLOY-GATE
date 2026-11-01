@@ -1,0 +1,1 @@
+{"name":"isolated-mobile-release-gate","private":true,"type":"module","scripts":{"test":"node --test gate.test.mjs play-alpha.test.mjs"},"engines":{"node":">=22"}}
