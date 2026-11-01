@@ -1,0 +1,93 @@
+name: isolated-mobile-release
+run-name: ${{ inputs.plan_id }} / ${{ inputs.confirm }}
+on:
+  workflow_dispatch:
+    inputs:
+      plan_id:
+        description: Reviewed release plan ID
+        required: true
+      confirm:
+        description: Exact reviewed action from plan.json
+        required: true
+        type: choice
+        options: [MA_TESTFLIGHT, MG_INTERNAL_ALPHA, MG_ALPHA_ONLY, MA_NOTES_ONLY, MG_PROBE_ONLY]
+      plan_sha256:
+        description: SHA256 of the reviewed canonical plan.json
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-mobile-store-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'A1STUDIO0323/A1PROGRAM-DEPLOY-GATE' && github.ref == 'refs/heads/main' && github.actor == 'A1STUDIO0323'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test gate.test.mjs play-alpha.test.mjs
+      - run: node gate.mjs check
+        env:
+          PLAN_ID: ${{ inputs.plan_id }}
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+  deploy:
+    needs: validate
+    environment: mobile-store-release
+    runs-on: ${{ startsWith(inputs.confirm, 'MA_') && 'macos-15' || 'ubuntu-latest' }}
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: ${{ startsWith(inputs.confirm, 'MA_') && '/Applications/Xcode_26.3.app/Contents/Developer' || '' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        if: inputs.confirm == 'MG_INTERNAL_ALPHA'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Require existing MA Xcode and SDK baseline
+        if: inputs.confirm == 'MA_TESTFLIGHT'
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version | head -1 | grep '^Xcode 26\.3'
+          SDK=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${SDK%%.*}" -ge 26
+      - name: Execute only the approved immutable payload
+        run: node gate.mjs deploy
+        env:
+          PLAN_ID: ${{ inputs.plan_id }}
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          PAYLOAD_KEY_BASE64: ${{ secrets.PAYLOAD_KEY_BASE64 }}
+          ACTIVE_PLAN_SHA256: ${{ vars.MOBILE_PAYLOAD_PLAN_SHA256 }}
+          APPSTORE_API_KEY_ID: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_KEY_ID || '' }}
+          APPSTORE_API_ISSUER_ID: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_ISSUER_ID || '' }}
+          APPSTORE_API_PRIVATE_KEY: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_PRIVATE_KEY || '' }}
+          APPLE_TEAM_ID: ${{ inputs.confirm == 'MA_TESTFLIGHT' && secrets.APPLE_TEAM_ID || '' }}
+          ANDROID_KEYSTORE_BASE64: ${{ inputs.confirm == 'MG_INTERNAL_ALPHA' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.confirm == 'MG_INTERNAL_ALPHA' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.confirm == 'MG_INTERNAL_ALPHA' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.confirm == 'MG_INTERNAL_ALPHA' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ startsWith(inputs.confirm, 'MG_') && secrets.PLAY_SERVICE_ACCOUNT_JSON || '' }}
+      - name: Preserve encrypted receipt only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: encrypted-store-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/receipt.sealed
+          if-no-files-found: ignore
+          retention-days: 7

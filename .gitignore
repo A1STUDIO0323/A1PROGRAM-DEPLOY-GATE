@@ -1,0 +1,14 @@
+private/
+*.sealed
+*.key
+*.p8
+*.jks
+*.aab
+*.ipa
+*.zip
+receipt.json
+
+*.keystore
+*.pem
+*.p12
+.env*
