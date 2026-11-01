@@ -1,6 +1,22 @@
 import {requireGate,sha256} from './gate.mjs';
+import {isDeepStrictEqual} from 'node:util';
 
 const others = tracks => JSON.stringify(tracks.filter(x => x.track !== 'alpha').sort((a,b)=>a.track.localeCompare(b.track)));
+const sameNotes=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((x,i)=>x.language===b[i].language&&x.text===b[i].text);
+function alphaRelease(tracks) {
+  const track=tracks.filter(x=>x.track==='alpha');
+  requireGate(track.length===1&&Array.isArray(track[0].releases)&&track[0].releases.length===1,'E_GATE_ALPHA_SHAPE');
+  const release=track[0].releases[0];
+  requireGate(release.status==='completed'&&Array.isArray(release.versionCodes)&&release.versionCodes.length===1&&
+    Object.keys(release).every(k=>['name','versionCodes','status','releaseNotes','countryTargeting','inAppUpdatePriority'].includes(k)),'E_GATE_ALPHA_SHAPE');
+  if(Object.hasOwn(release,'countryTargeting'))requireGate(release.countryTargeting&&
+    Object.keys(release.countryTargeting).every(k=>['countries','includeRestOfWorld'].includes(k))&&
+    Array.isArray(release.countryTargeting.countries)&&release.countryTargeting.countries.every(x=>/^[A-Z]{2}$/.test(x))&&
+    typeof release.countryTargeting.includeRestOfWorld==='boolean','E_GATE_ALPHA_SHAPE');
+  if(Object.hasOwn(release,'inAppUpdatePriority'))requireGate(Number.isInteger(release.inAppUpdatePriority)&&release.inAppUpdatePriority>=0&&release.inAppUpdatePriority<=5,'E_GATE_ALPHA_SHAPE');
+  return release;
+}
+const releaseEqual=(actual,expected)=>sameNotes(actual.releaseNotes,expected.releaseNotes)&&isDeepStrictEqual({...actual,releaseNotes:[]},{...expected,releaseNotes:[]});
 function releaseFor(tracks,track,code) {
   return tracks.find(x=>x.track===track)?.releases?.find(x=>x.status==='completed'&&x.versionCodes?.length===1&&String(x.versionCodes[0])===String(code));
 }
@@ -18,19 +34,21 @@ export async function promoteAlpha({api,base,plan,internalReceipt,notes,writeRec
     requireGate(before.some(x=>x.track==='alpha'), 'E_GATE_EXISTING_ALPHA_REQUIRED');
     const actualInternal=releaseFor(before,'internal',plan.mgVersionCode);
     requireGate(actualInternal, 'E_GATE_INTERNAL_READBACK');
-    requireGate(JSON.stringify(actualInternal.releaseNotes)===JSON.stringify([{language:'ko-KR',text:internalReceipt.releaseNotes}]),'E_GATE_INTERNAL_NOTES_READBACK');
+    requireGate(sameNotes(actualInternal.releaseNotes,[{language:'ko-KR',text:internalReceipt.releaseNotes}]),'E_GATE_INTERNAL_NOTES_READBACK');
     const bundles=(await api(base+'/edits/'+edit+'/bundles')).bundles||[];
     const same=bundles.find(x=>Number(x.versionCode)===plan.mgVersionCode);
     requireGate(same?.sha256===plan.mgSignedSha256, 'E_GATE_BUNDLE_MISMATCH');
+    const previous=alphaRelease(before);
+    const expected={name:plan.version,versionCodes:[String(plan.mgVersionCode)],status:'completed',releaseNotes:notes};
+    for(const key of ['countryTargeting','inAppUpdatePriority'])if(Object.hasOwn(previous,key))expected[key]=structuredClone(previous[key]);
     const already=releaseFor(before,'alpha',plan.mgVersionCode);
     if(already) {
-      requireGate(JSON.stringify(already.releaseNotes)===JSON.stringify(notes), 'E_GATE_EXISTING_ALPHA_NOTES_MISMATCH');
+      requireGate(releaseEqual(previous,expected), 'E_GATE_EXISTING_ALPHA_NOTES_MISMATCH');
     } else {
-      await api(base+'/edits/'+edit+'/tracks/alpha','PUT',{track:'alpha',releases:[{name:plan.version,versionCodes:[String(plan.mgVersionCode)],status:'completed',releaseNotes:notes}]});
+      await api(base+'/edits/'+edit+'/tracks/alpha','PUT',{track:'alpha',releases:[expected]});
       const staged=(await api(base+'/edits/'+edit+'/tracks')).tracks||[];
       requireGate(others(before)===others(staged), 'E_GATE_OTHER_TRACK_CHANGED');
-      const found=releaseFor(staged,'alpha',plan.mgVersionCode);
-      requireGate(found&&JSON.stringify(found.releaseNotes)===JSON.stringify(notes), 'E_GATE_ALPHA_STAGED');
+      requireGate(releaseEqual(alphaRelease(staged),expected), 'E_GATE_ALPHA_STAGED');
       await api(base+'/edits/'+edit+':validate','POST',{});
       commitAttempted=true;
       await api(base+'/edits/'+edit+':commit','POST',{});
@@ -38,8 +56,7 @@ export async function promoteAlpha({api,base,plan,internalReceipt,notes,writeRec
     }
     readEdit=(await api(base+'/edits','POST',{})).id;
     const after=(await api(base+'/edits/'+readEdit+'/tracks')).tracks||[];
-    const found=releaseFor(after,'alpha',plan.mgVersionCode);
-    requireGate(found&&JSON.stringify(found.releaseNotes)===JSON.stringify(notes)&&others(before)===others(after), 'E_GATE_ALPHA_READBACK');
+    requireGate(releaseEqual(alphaRelease(after),expected)&&others(before)===others(after), 'E_GATE_ALPHA_READBACK');
     const result={...receipt,status:'committed-track-readback',internalReadbackVerified:true,review:'check-console',published:'check-console',physical:'unverified'};
     writeReceipt(result);return result;
   } catch(error) {

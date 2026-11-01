@@ -7,3 +7,8 @@ private/
 *.ipa
 *.zip
 receipt.json
+
+*.keystore
+*.pem
+*.p12
+.env*

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {spawnSync} from 'node:child_process';
+import {spawnSync,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -10,7 +10,7 @@ const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 export function validatePlan(plan) {
   requireGate(plan?.schema === 1 && /^[a-z0-9-]{8,80}$/.test(plan.id || ''), 'E_GATE_PLAN');
-  requireGate(sha(plan.sourceSha) && sha(plan.gateSha), 'E_GATE_SOURCE');
+  requireGate(sha(plan.sourceSha) && sha(plan.controlSha) && sha(plan.gateSha), 'E_GATE_SOURCE');
   requireGate(/^\d+\.\d+\.\d+$/.test(plan.version || ''), 'E_GATE_VERSION');
   requireGate(hash(plan.payloadSha256) && hash(plan.cipherSha256), 'E_GATE_HASH');
   requireGate(['MA_TESTFLIGHT','MG_INTERNAL_ALPHA','MG_ALPHA_ONLY','MA_NOTES_ONLY','MG_PROBE_ONLY'].includes(plan.action), 'E_GATE_ACTION');
@@ -23,6 +23,11 @@ export function validatePlan(plan) {
   if(plan.action==='MG_ALPHA_ONLY')requireGate(hash(plan.mgSignedSha256),'E_GATE_ARTIFACT');
   if(plan.action.startsWith('MA_'))requireGate(/^\d{8}\.\d+$/.test(plan.maBuild || ''), 'E_GATE_BUILD');
   if(plan.action==='MA_TESTFLIGHT')requireGate(hash(plan.maUnsignedSha256),'E_GATE_ARTIFACT');
+  if(['MA_TESTFLIGHT','MG_INTERNAL_ALPHA'].includes(plan.action)) {
+    const e=plan.artifactEvidence,ma=plan.action==='MA_TESTFLIGHT';
+    requireGate(e?.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&/^\d+$/.test(e.runId||'')&&Number.isSafeInteger(e.artifactId)&&e.artifactId>0&&
+      /^sha256:[a-f0-9]{64}$/.test(e.artifactDigest||'')&&e.workflow===(ma?'.github/workflows/mobile-ios-build.yml':'.github/workflows/mobile-android.yml'),'E_GATE_BUILD_PROVENANCE');
+  }
   requireGate(plan.alphaTrack === 'alpha' && plan.packageName === 'kr.a1program.m', 'E_GATE_SCOPE');
   requireGate(typeof plan.expiresAt === 'string' && Number.isFinite(Date.parse(plan.expiresAt)), 'E_GATE_EXPIRY');
   requireGate(Array.isArray(plan.files) && plan.files.length > 0 && plan.files.length < 100, 'E_GATE_FILES');
@@ -62,7 +67,8 @@ export function unseal(encrypted, key, plan) {
   requireGate(sha256(encrypted) === plan.cipherSha256 && encrypted.subarray(0,4).toString() === 'RG01', 'E_GATE_CIPHER');
   requireGate(key.length === 32, 'E_GATE_KEY');
   try {
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, encrypted.subarray(4,16));
+    requireGate(encrypted.length>32,'E_GATE_CIPHER');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, encrypted.subarray(4,16),{authTagLength:16});
     decipher.setAAD(Buffer.from(plan.id)); decipher.setAuthTag(encrypted.subarray(16,32));
     const plaintext = Buffer.concat([decipher.update(encrypted.subarray(32)), decipher.final()]);
     requireGate(sha256(plaintext) === plan.payloadSha256, 'E_GATE_PLAINTEXT');
@@ -88,14 +94,26 @@ export function materialize(plaintext, plan, target) {
     fs.writeFileSync(dest, bytes, {flag:'wx',mode:0o600});
   }
 }
+export function verifyGateCopies(plan,blobs) {
+  for(const name of ['gate.mjs','play-alpha.mjs'])requireGate(plan.files.find(x=>x.path===name)?.sha256===sha256(blobs[name]),'E_GATE_SELF_COPY');
+}
+export async function boundedBody(response,limit) {
+  const length=response.headers.get('content-length');
+  requireGate(length===null||(/^\d+$/.test(length)&&Number(length)<limit),'E_GATE_SIZE');
+  const reader=response.body?.getReader();requireGate(reader,'E_GATE_DOWNLOAD');
+  const chunks=[];let size=0;
+  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.length;requireGate(size<limit,'E_GATE_SIZE');chunks.push(Buffer.from(value));}}
+  catch(error){await reader.cancel().catch(()=>{});throw error;}
+  finally{reader.releaseLock();}
+  return Buffer.concat(chunks,size);
+}
 async function run() {
   const planId=process.env.PLAN_ID;
   requireGate(/^[a-z0-9-]{8,80}$/.test(planId||''), 'E_GATE_PLAN_ID');
   const base=`https://github.com/A1STUDIO0323/A1PROGRAM-DEPLOY-GATE/releases/download/${planId}`;
   const planResponse=await fetch(base+'/plan.json',{signal:AbortSignal.timeout(30000)});
   requireGate(planResponse.ok,'E_GATE_PLAN_DOWNLOAD');
-  const planText=await planResponse.text();
-  requireGate(planText.length<65536,'E_GATE_PLAN_SIZE');
+  const planText=(await boundedBody(planResponse,65536)).toString('utf8');
   const plan = JSON.parse(planText);
   requireGate(plan.id===planId,'E_GATE_PLAN_ID');
   validateContext(plan, {
@@ -103,6 +121,8 @@ async function run() {
     actor:process.env.GITHUB_ACTOR, sha:process.env.GITHUB_SHA, confirm:process.env.CONFIRM,
     runAttempt:process.env.GITHUB_RUN_ATTEMPT, planSha256:process.env.PLAN_SHA256, now:Date.now()
   });
+  const root=path.dirname(fileURLToPath(import.meta.url));
+  verifyGateCopies(plan,Object.fromEntries(['gate.mjs','play-alpha.mjs'].map(name=>[name,execFileSync('git',['show',plan.gateSha+':'+name],{cwd:root})])));
   // A lost response never authorizes a replay. A new recovery plan is required even after a cancelled prior run.
   for(let page=1;page<=10;page++) {
     const history=await fetch(`https://api.github.com/repos/A1STUDIO0323/A1PROGRAM-DEPLOY-GATE/actions/workflows/release.yml/runs?per_page=100&page=${page}`,{
@@ -115,14 +135,18 @@ async function run() {
     requireGate(page<10,'E_GATE_HISTORY_LIMIT');
   }
   const command = process.argv[2];
-  if (command === 'check') { console.log('Gate plan validated; no credentials used'); return; }
+  if (command === 'check') {
+    if(process.env.GITHUB_STEP_SUMMARY)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `## Reviewed immutable release\nAction: ${plan.action}\n\nSource: ${plan.sourceSha}\n\nControl: ${plan.controlSha}\n\nGate: ${plan.gateSha}\n\n`+
+      plan.files.map(x=>`- ${x.path}: ${x.sha256}`).join('\n')+'\n');
+    console.log('Gate plan validated; no credentials used');return;
+  }
   requireGate(command === 'deploy', 'E_GATE_COMMAND');
   // The source URL is fixed; arbitrary URLs and private-repository access tokens are unnecessary.
   const url = base+'/payload.sealed';
   const response = await fetch(url, {signal:AbortSignal.timeout(60000)});
-  requireGate(response.ok && Number(response.headers.get('content-length')) < 1024*1024*1024, 'E_GATE_DOWNLOAD');
-  const ciphertext = Buffer.from(await response.arrayBuffer());
-  requireGate(ciphertext.length < 1024*1024*1024, 'E_GATE_SIZE');
+  requireGate(response.ok, 'E_GATE_DOWNLOAD');
+  const ciphertext = await boundedBody(response,1024*1024*1024);
   const key = Buffer.from(process.env.PAYLOAD_KEY_BASE64 || '', 'base64');
   const plaintext = unseal(ciphertext, key, plan);
   const target = path.join(fs.realpathSync(process.env.RUNNER_TEMP), 'gate-private');
@@ -131,7 +155,7 @@ async function run() {
     fs.writeFileSync(path.join(target,'plan.json'), JSON.stringify(plan), {flag:'wx',mode:0o600});
     // All driver bytes, including dependencies, are bound to the reviewed plan before secrets are supplied.
     // Suppress private compiler/API output; publish only a stable status code.
-    const result = spawnSync(process.execPath, ['deploy.mjs'], {cwd:target, env:{...process.env, PAYLOAD_KEY_BASE64:''}, stdio:'ignore',timeout:35*60*1000});
+    const result = spawnSync(process.execPath, ['deploy.mjs'], {cwd:target, env:{...process.env, PAYLOAD_KEY_BASE64:'',GH_TOKEN:'',GITHUB_TOKEN:'',ACTIONS_RUNTIME_TOKEN:'',ACTIONS_ID_TOKEN_REQUEST_TOKEN:''}, stdio:'ignore',timeout:35*60*1000});
     const receiptPath=path.join(target,'receipt.json');
     if(fs.existsSync(receiptPath)) {
       const receipt=fs.readFileSync(receiptPath);

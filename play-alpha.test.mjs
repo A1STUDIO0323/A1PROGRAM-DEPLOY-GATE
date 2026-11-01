@@ -11,6 +11,8 @@ function mock(options={}) {
  if(options.wrongInternalNotes)committed[0].releases[0].releaseNotes[0].text='different';
  if(options.noInternal)committed[0].releases=[];
  if(options.noAlpha)committed=committed.filter(x=>x.track!=='alpha');
+ if(options.alpha)committed.find(x=>x.track==='alpha').releases=clone(options.alpha);
+ if(options.reorderNotes)committed[0].releases[0].releaseNotes=notes.map(x=>({text:x.text,language:x.language}));
  const edits=new Map(),calls=[],receipts=[];let i=0;
  return {calls,receipts,api:async(url,method='GET',body)=>{
   calls.push({url,method,body});
@@ -21,6 +23,7 @@ function mock(options={}) {
   if(tail==='/bundles')return {bundles:[{versionCode:plan.mgVersionCode,sha256:options.wrongBundle?'c'.repeat(64):plan.mgSignedSha256}]};
   if(tail==='/tracks/alpha'&&method==='PUT'){
    const tracks=edits.get(id),n=tracks.findIndex(x=>x.track==='alpha');tracks[n]=clone(body);
+   if(options.dropTargeting)delete tracks[n].releases[0].countryTargeting;
    if(options.changeProduction)tracks.find(x=>x.track==='production').releases=[{versionCodes:['999']}];return {};
   }
   if(tail===':validate')return {};
@@ -46,4 +49,24 @@ test('explicit Alpha recovery checks actual internal notes and same bundle after
  const m=mock();const r=await promoteAlpha({...m,base:'/app',plan,internalReceipt:{...receipt,status:'commit-response-unknown',storeNotesVerified:false},notes});
  assert.equal(r.internalReadbackVerified,true);assert.ok(m.calls.every(x=>!x.url.includes('/upload/')));
  assert.deepEqual(m.calls.filter(x=>x.method==='PUT').map(x=>x.url),['/app/edits/1/tracks/alpha']);
+});
+
+test('preserves existing Alpha country targeting and update priority, regardless of note property order',async()=>{
+ const previous={status:'completed',versionCodes:['200'],countryTargeting:{countries:['KR'],includeRestOfWorld:false},inAppUpdatePriority:3};
+ const m=mock({alpha:[previous],reorderNotes:true});
+ await promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes});
+ const body=m.calls.find(x=>x.method==='PUT').body;
+ assert.deepEqual(body.releases[0].countryTargeting,previous.countryTargeting);assert.equal(body.releases[0].inAppUpdatePriority,3);
+});
+for(const releases of [[{status:'draft',versionCodes:['200']}],[{status:'inProgress',versionCodes:['200'],userFraction:0.1}],
+ [{status:'halted',versionCodes:['200']}],[{status:'completed',versionCodes:['200']},{status:'draft',versionCodes:['201']}],
+ [{status:'completed',versionCodes:['200'],unknownPolicy:true}]])
+ test('unapproved Alpha shape stops before PUT and commit: '+JSON.stringify(releases),async()=>{
+  const m=mock({alpha:releases});await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes}),/E_GATE_ALPHA_SHAPE/);
+  assert.ok(m.calls.every(x=>x.method!=='PUT'&&!x.url.endsWith(':commit')));
+ });
+test('staged Alpha targeting drift stops before commit',async()=>{
+ const m=mock({alpha:[{status:'completed',versionCodes:['200'],countryTargeting:{countries:['KR'],includeRestOfWorld:false}}],dropTargeting:true});
+ await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes}),/E_GATE_ALPHA_STAGED/);
+ assert.ok(m.calls.every(x=>!x.url.endsWith(':commit')));
 });

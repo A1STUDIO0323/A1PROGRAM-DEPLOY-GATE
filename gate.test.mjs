@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
-import {validatePlan,validateContext,validateHistory,seal,unseal,materialize,sha256} from './gate.mjs';
+import {validatePlan,validateContext,validateHistory,seal,unseal,materialize,sha256,verifyGateCopies,boundedBody} from './gate.mjs';
 const now=Date.parse('2026-11-01T05:00:00Z');
 const files=[{path:'deploy.mjs',base64:Buffer.from('export const safe=true;').toString('base64')}];
 const plain=Buffer.from(JSON.stringify({schema:1,files}));
 const key=crypto.randomBytes(32),cipher=seal(plain,key,'release-210');
-const sample=()=>({schema:1,id:'release-210',sourceSha:'a'.repeat(40),gateSha:'b'.repeat(40),version:'0.16.210',payloadSha256:sha256(plain),cipherSha256:sha256(cipher),mgVersionCode:29891489,maBuild:'20261031.232927',mgUnsignedSha256:'c'.repeat(64),maUnsignedSha256:'d'.repeat(64),uploadCertSha256:'e'.repeat(64),action:'MG_INTERNAL_ALPHA',alphaTrack:'alpha',packageName:'kr.a1program.m',expiresAt:'2026-11-01T10:00:00Z',files:files.map(x=>({path:x.path,sha256:sha256(Buffer.from(x.base64,'base64'))}))});
+const sample=()=>({schema:1,id:'release-210',sourceSha:'a'.repeat(40),controlSha:'d'.repeat(40),gateSha:'b'.repeat(40),version:'0.16.210',payloadSha256:sha256(plain),cipherSha256:sha256(cipher),mgVersionCode:29891489,maBuild:'20261031.232927',mgUnsignedSha256:'c'.repeat(64),maUnsignedSha256:'d'.repeat(64),uploadCertSha256:'e'.repeat(64),artifactEvidence:{repository:'A1STUDIO0323/A1PROGRAM-HOME',sourceSha:'a'.repeat(40),runId:'123',artifactId:1,artifactDigest:'sha256:'+'c'.repeat(64),workflow:'.github/workflows/mobile-android.yml'},action:'MG_INTERNAL_ALPHA',alphaTrack:'alpha',packageName:'kr.a1program.m',expiresAt:'2026-11-01T10:00:00Z',files:files.map(x=>({path:x.path,sha256:sha256(Buffer.from(x.base64,'base64'))}))});
 const context=plan=>({repository:'A1STUDIO0323/A1PROGRAM-DEPLOY-GATE',ref:'refs/heads/main',event:'workflow_dispatch',actor:'A1STUDIO0323',sha:plan.gateSha,confirm:plan.action,runAttempt:'1',planSha256:sha256(JSON.stringify(plan)),now});
 test('exact approved plan and authenticated decryption',()=>{
   const plan=sample();validatePlan(plan);validateContext(plan,context(plan));
@@ -85,3 +85,17 @@ test('actual workflow secret expressions give recovery/probe only the credential
   assert.deepEqual(actual.sort(),expected.sort(),action);
  }
 });
+
+test('control commit identity is mandatory',()=>{const p=sample();delete p.controlSha;assert.throws(()=>validatePlan(p));});
+test('public gate copies must match the exact committed blobs before execution',()=>{
+ const blobs={'gate.mjs':Buffer.from('gate'),'play-alpha.mjs':Buffer.from('alpha')};
+ const p=sample();p.files.push(...Object.entries(blobs).map(([path,b])=>({path,sha256:sha256(b)})));verifyGateCopies(p,blobs);
+ assert.throws(()=>verifyGateCopies(p,{...blobs,'gate.mjs':Buffer.from('changed')}),/E_GATE_SELF_COPY/);
+});
+test('streaming download enforces the limit even without a content length header',async()=>{
+ const ok=new Response(new Uint8Array([1,2,3]));assert.equal((await boundedBody(ok,4)).length,3);
+ await assert.rejects(boundedBody(new Response(new Uint8Array([1,2,3,4])),4),/E_GATE_SIZE/);
+ await assert.rejects(boundedBody(new Response('a',{headers:{'content-length':'999'}}),4),/E_GATE_SIZE/);
+});
+
+test('native build provenance is required and bound to the plan source',()=>{const p=sample();assert.throws(()=>validatePlan({...p,artifactEvidence:undefined}));assert.throws(()=>validatePlan({...p,artifactEvidence:{...p.artifactEvidence,sourceSha:'f'.repeat(40)}}));});
