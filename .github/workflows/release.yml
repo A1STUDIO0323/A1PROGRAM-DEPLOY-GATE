@@ -73,6 +73,7 @@ jobs:
           CONFIRM: ${{ inputs.confirm }}
           PLAN_SHA256: ${{ inputs.plan_sha256 }}
           PAYLOAD_KEY_BASE64: ${{ secrets.PAYLOAD_KEY_BASE64 }}
+          ACTIVE_PLAN_SHA256: ${{ vars.MOBILE_PAYLOAD_PLAN_SHA256 }}
           APPSTORE_API_KEY_ID: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_KEY_ID || '' }}
           APPSTORE_API_ISSUER_ID: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_ISSUER_ID || '' }}
           APPSTORE_API_PRIVATE_KEY: ${{ startsWith(inputs.confirm, 'MA_') && secrets.APPSTORE_API_PRIVATE_KEY || '' }}

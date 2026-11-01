@@ -142,6 +142,7 @@ async function run() {
     console.log('Gate plan validated; no credentials used');return;
   }
   requireGate(command === 'deploy', 'E_GATE_COMMAND');
+  requireGate(process.env.ACTIVE_PLAN_SHA256===process.env.PLAN_SHA256,'E_GATE_ACTIVE_PLAN');
   // The source URL is fixed; arbitrary URLs and private-repository access tokens are unnecessary.
   const url = base+'/payload.sealed';
   const response = await fetch(url, {signal:AbortSignal.timeout(60000)});
