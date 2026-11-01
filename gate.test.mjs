@@ -72,7 +72,9 @@ test('one public workflow has no private checkout, raw app artifact or repositor
 });
 test('actual workflow secret expressions give recovery/probe only the credentials their actions need',()=>{
  const y=fs.readFileSync(new URL('.github/workflows/release.yml',import.meta.url),'utf8');
- const expressions=[...y.matchAll(/^          ([A-Z0-9_]+): \$\{\{ (.+) \}\}$/gm)].filter(([,name])=>!['PLAN_ID','GH_TOKEN','CONFIRM','PLAN_SHA256','PAYLOAD_KEY_BASE64'].includes(name));
+ const allExpressions=[...y.matchAll(/^          ([A-Z0-9_]+): \$\{\{ (.+) \}\}$/gm)];
+ assert.equal(allExpressions.find(([,name])=>name==='ACTIVE_PLAN_SHA256')?.[2],'vars.MOBILE_PAYLOAD_PLAN_SHA256');
+ const expressions=allExpressions.filter(([,name])=>!['PLAN_ID','GH_TOKEN','CONFIRM','PLAN_SHA256','PAYLOAD_KEY_BASE64','ACTIVE_PLAN_SHA256'].includes(name));
  assert.equal(expressions.length,9);
  const secrets=Object.fromEntries(expressions.map(([,name])=>[name,'synthetic:'+name]));
  for(const [action,expected] of [
