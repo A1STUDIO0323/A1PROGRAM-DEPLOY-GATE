@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import {validatePlan,validateContext,validateHistory,seal,unseal,materialize,sha256} from './gate.mjs';
 const now=Date.parse('2026-11-01T05:00:00Z');
 const files=[{path:'deploy.mjs',base64:Buffer.from('export const safe=true;').toString('base64')}];
@@ -22,6 +23,10 @@ test('notes recovery needs an existing build identity, not expired unsigned bina
 test('read-only device availability probe needs no signing artifact or upload certificate',()=>{
  const p={...sample(),action:'MG_PROBE_ONLY'};for(const key of ['mgVersionCode','maBuild','mgUnsignedSha256','maUnsignedSha256','uploadCertSha256'])delete p[key];
  validatePlan(p);
+});
+test('Alpha-only recovery binds original signed bundle and needs no unsigned build or keystore',()=>{
+ const p={...sample(),action:'MG_ALPHA_ONLY',mgSignedSha256:'f'.repeat(64)};delete p.mgUnsignedSha256;delete p.uploadCertSha256;
+ validatePlan(p);assert.throws(()=>validatePlan({...p,mgSignedSha256:null}));
 });
 for(const [name,field,value] of [
   ['fork','repository','attacker/fork'],['branch','ref','refs/heads/other'],['pull request','event','pull_request'],
@@ -64,4 +69,19 @@ test('one public workflow has no private checkout, raw app artifact or repositor
  assert.equal((y.match(/persist-credentials: false/g)||[]).length,2);
  assert.doesNotMatch(y,/pull_request_target|secrets: inherit|contents: write|npm (?:install|ci)|\.aab|\.ipa|\.p8|\.jks/);
  assert.match(y,/path: \$\{\{ runner.temp \}\}\/receipt.sealed/);
+});
+test('actual workflow secret expressions give recovery/probe only the credentials their actions need',()=>{
+ const y=fs.readFileSync(new URL('.github/workflows/release.yml',import.meta.url),'utf8');
+ const expressions=[...y.matchAll(/^          ([A-Z0-9_]+): \$\{\{ (.+) \}\}$/gm)].filter(([,name])=>!['PLAN_ID','GH_TOKEN','CONFIRM','PLAN_SHA256','PAYLOAD_KEY_BASE64'].includes(name));
+ assert.equal(expressions.length,9);
+ const secrets=Object.fromEntries(expressions.map(([,name])=>[name,'synthetic:'+name]));
+ for(const [action,expected] of [
+  ['MG_ALPHA_ONLY',['PLAY_SERVICE_ACCOUNT_JSON']],['MG_PROBE_ONLY',['PLAY_SERVICE_ACCOUNT_JSON']],
+  ['MA_NOTES_ONLY',['APPSTORE_API_KEY_ID','APPSTORE_API_ISSUER_ID','APPSTORE_API_PRIVATE_KEY']],
+  ['MA_TESTFLIGHT',['APPSTORE_API_KEY_ID','APPSTORE_API_ISSUER_ID','APPSTORE_API_PRIVATE_KEY','APPLE_TEAM_ID']],
+  ['MG_INTERNAL_ALPHA',['ANDROID_KEYSTORE_BASE64','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD','PLAY_SERVICE_ACCOUNT_JSON']]
+ ]){
+  const actual=expressions.filter(([,name,code])=>vm.runInNewContext(code,{inputs:{confirm:action},secrets,startsWith:(s,p)=>s.startsWith(p)},{timeout:100,contextCodeGeneration:{strings:false,wasm:false}})===secrets[name]).map(([,name])=>name);
+  assert.deepEqual(actual.sort(),expected.sort(),action);
+ }
 });

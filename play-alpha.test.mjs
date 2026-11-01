@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {promoteAlpha} from './play-alpha.mjs';
+import {sha256} from './gate.mjs';
 const plan={sourceSha:'a'.repeat(40),mgVersionCode:29891489,mgSignedSha256:'b'.repeat(64),version:'0.16.210'};
-const receipt={status:'completed',storeNotesVerified:true,sourceSha:plan.sourceSha,versionCode:plan.mgVersionCode,signedSha256:plan.mgSignedSha256};
 const notes=[{language:'ko-KR',text:'고객 기능과 연결 복구를 개선했습니다. 기기 확인은 별도 진행합니다.'}];
+const receipt={status:'completed',storeNotesVerified:true,sourceSha:plan.sourceSha,versionCode:plan.mgVersionCode,signedSha256:plan.mgSignedSha256,releaseNotes:notes[0].text,notesSha256:sha256(notes[0].text)};
 const clone=x=>structuredClone(x);
 function mock(options={}) {
- let committed=[{track:'internal',releases:[{status:'completed',versionCodes:[String(plan.mgVersionCode)]}]},{track:'alpha',releases:[{status:'completed',versionCodes:['200']}]},{track:'production',releases:[]}];
+ let committed=[{track:'internal',releases:[{status:'completed',versionCodes:[String(plan.mgVersionCode)],releaseNotes:clone(notes)}]},{track:'alpha',releases:[{status:'completed',versionCodes:['200']}]},{track:'production',releases:[]}];
+ if(options.wrongInternalNotes)committed[0].releases[0].releaseNotes[0].text='different';
  if(options.noInternal)committed[0].releases=[];
  if(options.noAlpha)committed=committed.filter(x=>x.track!=='alpha');
  const edits=new Map(),calls=[],receipts=[];let i=0;
@@ -32,11 +34,16 @@ test('promotes existing exact bundle after internal readback, preserves other tr
  assert.equal(m.calls.filter(x=>x.method==='PUT').length,1);
  assert.ok(m.calls.every(x=>!x.url.includes('/upload/')));
 });
-for(const [name,opts] of [['missing internal',{noInternal:true}],['missing existing alpha',{noAlpha:true}],['different signed bundle',{wrongBundle:true}],['other track changed',{changeProduction:true}]])
+for(const [name,opts] of [['missing internal',{noInternal:true}],['wrong internal notes',{wrongInternalNotes:true}],['missing existing alpha',{noAlpha:true}],['different signed bundle',{wrongBundle:true}],['other track changed',{changeProduction:true}]])
  test('stops before commit: '+name,async()=>{const m=mock(opts);await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes}));assert.ok(m.calls.every(x=>!x.url.endsWith(':commit')));});
 test('wrong internal receipt cannot call API',async()=>{const m=mock();await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:{...receipt,versionCode:1},notes}));assert.equal(m.calls.length,0);});
 test('lost commit response is unknown; no automatic commit retry or edit deletion',async()=>{
  const m=mock({commitLost:true});await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes}));
  assert.equal(m.calls.filter(x=>x.url.endsWith(':commit')).length,1);
  assert.equal(m.receipts.at(-1).status,'commit-outcome-unconfirmed');assert.ok(m.calls.every(x=>x.method!=='DELETE'));
+});
+test('explicit Alpha recovery checks actual internal notes and same bundle after an uncertain prior internal commit, without re-upload',async()=>{
+ const m=mock();const r=await promoteAlpha({...m,base:'/app',plan,internalReceipt:{...receipt,status:'commit-response-unknown',storeNotesVerified:false},notes});
+ assert.equal(r.internalReadbackVerified,true);assert.ok(m.calls.every(x=>!x.url.includes('/upload/')));
+ assert.deepEqual(m.calls.filter(x=>x.method==='PUT').map(x=>x.url),['/app/edits/1/tracks/alpha']);
 });

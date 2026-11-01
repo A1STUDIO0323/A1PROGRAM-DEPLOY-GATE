@@ -10,7 +10,7 @@ on:
         description: Exact reviewed action from plan.json
         required: true
         type: choice
-        options: [MA_TESTFLIGHT, MG_INTERNAL_ALPHA, MA_NOTES_ONLY, MG_PROBE_ONLY]
+        options: [MA_TESTFLIGHT, MG_INTERNAL_ALPHA, MG_ALPHA_ONLY, MA_NOTES_ONLY, MG_PROBE_ONLY]
       plan_sha256:
         description: SHA256 of the reviewed canonical plan.json
         required: true
