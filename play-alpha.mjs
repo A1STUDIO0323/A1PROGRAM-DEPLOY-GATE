@@ -11,8 +11,8 @@ function alphaRelease(tracks) {
     Object.keys(release).every(k=>['name','versionCodes','status','releaseNotes','countryTargeting','inAppUpdatePriority'].includes(k)),'E_GATE_ALPHA_SHAPE');
   if(Object.hasOwn(release,'countryTargeting'))requireGate(release.countryTargeting&&
     Object.keys(release.countryTargeting).every(k=>['countries','includeRestOfWorld'].includes(k))&&
-    Array.isArray(release.countryTargeting.countries)&&release.countryTargeting.countries.every(x=>/^[A-Z]{2}$/.test(x))&&
-    typeof release.countryTargeting.includeRestOfWorld==='boolean','E_GATE_ALPHA_SHAPE');
+    (release.countryTargeting.countries===undefined||(Array.isArray(release.countryTargeting.countries)&&release.countryTargeting.countries.every(x=>/^[A-Z]{2}$/.test(x))))&&
+    (release.countryTargeting.includeRestOfWorld===undefined||typeof release.countryTargeting.includeRestOfWorld==='boolean'),'E_GATE_ALPHA_SHAPE');
   if(Object.hasOwn(release,'inAppUpdatePriority'))requireGate(Number.isInteger(release.inAppUpdatePriority)&&release.inAppUpdatePriority>=0&&release.inAppUpdatePriority<=5,'E_GATE_ALPHA_SHAPE');
   return release;
 }

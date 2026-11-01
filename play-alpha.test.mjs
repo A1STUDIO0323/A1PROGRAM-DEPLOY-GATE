@@ -70,3 +70,9 @@ test('staged Alpha targeting drift stops before commit',async()=>{
  await assert.rejects(promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes}),/E_GATE_ALPHA_STAGED/);
  assert.ok(m.calls.every(x=>!x.url.endsWith(':commit')));
 });
+for(const targeting of [{countries:['KR']},{includeRestOfWorld:true}])
+ test('preserves omitted optional targeting fields without adding defaults: '+JSON.stringify(targeting),async()=>{
+  const m=mock({alpha:[{status:'completed',versionCodes:['200'],countryTargeting:targeting}]});
+  await promoteAlpha({...m,base:'/app',plan,internalReceipt:receipt,notes});
+  assert.deepEqual(m.calls.find(x=>x.method==='PUT').body.releases[0].countryTargeting,targeting);
+ });
