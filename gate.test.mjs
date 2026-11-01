@@ -15,6 +15,14 @@ test('exact approved plan and authenticated decryption',()=>{
   const plan=sample();validatePlan(plan);validateContext(plan,context(plan));
   assert.deepEqual(unseal(cipher,key,plan),plain);
 });
+test('notes recovery needs an existing build identity, not expired unsigned binary artifacts',()=>{
+ const p={...sample(),action:'MA_NOTES_ONLY'};delete p.mgVersionCode;delete p.mgUnsignedSha256;delete p.maUnsignedSha256;delete p.uploadCertSha256;
+ validatePlan(p);assert.throws(()=>validatePlan({...p,maBuild:null}));
+});
+test('read-only device availability probe needs no signing artifact or upload certificate',()=>{
+ const p={...sample(),action:'MG_PROBE_ONLY'};for(const key of ['mgVersionCode','maBuild','mgUnsignedSha256','maUnsignedSha256','uploadCertSha256'])delete p[key];
+ validatePlan(p);
+});
 for(const [name,field,value] of [
   ['fork','repository','attacker/fork'],['branch','ref','refs/heads/other'],['pull request','event','pull_request'],
   ['other user','actor','attacker'],['unreviewed gate','sha','c'.repeat(40)],['wrong action','confirm','MA_TESTFLIGHT'],

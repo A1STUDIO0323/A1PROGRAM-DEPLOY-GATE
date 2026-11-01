@@ -13,10 +13,13 @@ export function validatePlan(plan) {
   requireGate(sha(plan.sourceSha) && sha(plan.gateSha), 'E_GATE_SOURCE');
   requireGate(/^\d+\.\d+\.\d+$/.test(plan.version || ''), 'E_GATE_VERSION');
   requireGate(hash(plan.payloadSha256) && hash(plan.cipherSha256), 'E_GATE_HASH');
-  requireGate(Number.isSafeInteger(plan.mgVersionCode) && plan.mgVersionCode > 0, 'E_GATE_BUILD');
-  requireGate(/^\d{8}\.\d+$/.test(plan.maBuild || ''), 'E_GATE_BUILD');
-  requireGate(hash(plan.mgUnsignedSha256) && hash(plan.maUnsignedSha256) && hash(plan.uploadCertSha256), 'E_GATE_ARTIFACT');
   requireGate(['MA_TESTFLIGHT','MG_INTERNAL_ALPHA','MA_NOTES_ONLY','MG_PROBE_ONLY'].includes(plan.action), 'E_GATE_ACTION');
+  if(plan.action==='MG_INTERNAL_ALPHA') {
+    requireGate(Number.isSafeInteger(plan.mgVersionCode) && plan.mgVersionCode > 0, 'E_GATE_BUILD');
+    requireGate(hash(plan.mgUnsignedSha256) && hash(plan.uploadCertSha256), 'E_GATE_ARTIFACT');
+  }
+  if(plan.action.startsWith('MA_'))requireGate(/^\d{8}\.\d+$/.test(plan.maBuild || ''), 'E_GATE_BUILD');
+  if(plan.action==='MA_TESTFLIGHT')requireGate(hash(plan.maUnsignedSha256),'E_GATE_ARTIFACT');
   requireGate(plan.alphaTrack === 'alpha' && plan.packageName === 'kr.a1program.m', 'E_GATE_SCOPE');
   requireGate(typeof plan.expiresAt === 'string' && Number.isFinite(Date.parse(plan.expiresAt)), 'E_GATE_EXPIRY');
   requireGate(Array.isArray(plan.files) && plan.files.length > 0 && plan.files.length < 100, 'E_GATE_FILES');
