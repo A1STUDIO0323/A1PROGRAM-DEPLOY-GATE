@@ -48,8 +48,8 @@ async function upload(name,bytes,token){
  const out=await fetch(release.upload_url.split('{')[0]+'?name='+encodeURIComponent(name),{method:'POST',headers:{...headers,'Content-Type':'application/octet-stream'},body:bytes});if(out.status!==201)fail('C250_UPLOAD');
 }
 async function collect(){
- const p=await readPlan(),token=process.env.GH_TOKEN||'',runId=process.env.GITHUB_RUN_ID;
- for(const lane of LANES){const name=lane+'-'+runId+'.sealed',file=path.join(process.env.RUNNER_TEMP,'classic250-encrypted-results',name);const bytes=fs.readFileSync(file);if(bytes.length<36||bytes.length>256*1024*1024||bytes.subarray(0,8).toString()!=='C250AES1')fail('C250_COLLECT');await upload(name,bytes,token);}
+ const p=await readPlan(),token=process.env.GH_TOKEN||'',runId=process.env.DIAGNOSTIC_RECOVERY==='true'?'41638849573':process.env.GITHUB_RUN_ID;
+ for(const lane of LANES){const name=lane+'-'+runId+'.sealed',file=path.join(process.cwd(),'classic250-encrypted-results',name);const bytes=fs.readFileSync(file);if(bytes.length<36||bytes.length>256*1024*1024||bytes.subarray(0,8).toString()!=='C250AES1')fail('C250_COLLECT');await upload(name,bytes,token);}
  console.log('C250_ENCRYPTED_RESULTS_UPLOADED');
 }
 async function cacheBudget(){
