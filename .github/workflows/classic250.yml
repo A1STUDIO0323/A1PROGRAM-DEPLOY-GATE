@@ -1,0 +1,129 @@
+name: classic250-encrypted-build
+run-name: classic-250-8b36b282-20261103 / CLASSIC250_BUILD
+on:
+  workflow_dispatch:
+    inputs:
+      plan_sha256:
+        description: Reviewed SHA256 of plan.json
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-classic250-build
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'A1STUDIO0323/A1PROGRAM-DEPLOY-GATE' && github.ref == 'refs/heads/main' && github.actor == 'A1STUDIO0323'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test classic250.test.mjs
+      - run: node classic250.mjs check
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+  build:
+    needs: validate
+    environment: mobile-store-release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - lane: source
+            os: ubuntu-latest
+            node: 22
+          - lane: mobile20
+            os: ubuntu-latest
+            node: 20
+          - lane: mobile22
+            os: ubuntu-latest
+            node: 22
+          - lane: ma
+            os: macos-15
+            node: 22
+          - lane: windows
+            os: windows-latest
+            node: 22
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Exact source CI and encrypted results only
+        run: node classic250.mjs run
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          LANE: ${{ matrix.lane }}
+          CLASSIC_CI_PAYLOAD_KEY: ${{ secrets.CLASSIC_CI_PAYLOAD_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      - name: Transfer only encrypted result within free cache capacity
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-${{ matrix.lane }}
+  collect:
+    needs: [validate, build]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-source
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-mobile20
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-mobile22
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-ma
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: classic250-encrypted-results
+          enableCrossOsArchive: true
+          key: classic250-${{ github.run_id }}-windows
+          fail-on-cache-miss: true
+      - name: Publish ciphertext only; never execute decrypted source in this write job
+        run: node classic250.mjs collect
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GH_TOKEN: ${{ github.token }}

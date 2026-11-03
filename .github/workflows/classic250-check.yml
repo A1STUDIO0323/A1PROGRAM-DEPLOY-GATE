@@ -1,0 +1,18 @@
+name: classic250-controller-check
+on:
+  pull_request:
+    paths: ['classic250.mjs', 'classic250.test.mjs', '.github/workflows/classic250.yml', '.github/workflows/classic250-check.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test classic250.test.mjs gate.test.mjs play-alpha.test.mjs
