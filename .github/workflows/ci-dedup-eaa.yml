@@ -1,0 +1,120 @@
+name: ci-dedup-eaa-encrypted-verify
+run-name: ci-dedup-eaa60a03-20261103 / CI_DEDUP_VERIFY
+on:
+  workflow_dispatch:
+    inputs:
+      plan_sha256:
+        description: Reviewed SHA256 of plan.json
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-ci-dedup-eaa-verify
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'A1STUDIO0323/A1PROGRAM-DEPLOY-GATE' && github.ref == 'refs/heads/main' && github.actor == 'A1STUDIO0323'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test ci-dedup-eaa.test.mjs
+      - run: node ci-dedup-eaa.mjs check
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+  build:
+    needs: validate
+    environment: mobile-store-release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - lane: source
+            os: ubuntu-latest
+            node: 22
+          - lane: mobile20
+            os: ubuntu-latest
+            node: 20
+          - lane: mobile22
+            os: ubuntu-latest
+            node: 22
+          - lane: ma
+            os: macos-15
+            node: 22
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Exact source CI and encrypted results only
+        run: node ci-dedup-eaa.mjs run
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          LANE: ${{ matrix.lane }}
+          CI_DEDUP_PAYLOAD_KEY: ${{ secrets.CI_DEDUP_PAYLOAD_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      - name: Transfer only encrypted result within free cache capacity
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ci-dedup-encrypted-results
+          enableCrossOsArchive: true
+          key: ci-dedup-eaa-${{ github.run_id }}-${{ matrix.lane }}
+  collect:
+    needs: [validate, build]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ci-dedup-encrypted-results
+          enableCrossOsArchive: true
+          key: ci-dedup-eaa-${{ github.run_id }}-source
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ci-dedup-encrypted-results
+          enableCrossOsArchive: true
+          key: ci-dedup-eaa-${{ github.run_id }}-mobile20
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ci-dedup-encrypted-results
+          enableCrossOsArchive: true
+          key: ci-dedup-eaa-${{ github.run_id }}-mobile22
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ci-dedup-encrypted-results
+          enableCrossOsArchive: true
+          key: ci-dedup-eaa-${{ github.run_id }}-ma
+          fail-on-cache-miss: true
+      - name: Publish ciphertext only; never execute decrypted source in this write job
+        run: node ci-dedup-eaa.mjs collect
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GH_TOKEN: ${{ github.token }}
