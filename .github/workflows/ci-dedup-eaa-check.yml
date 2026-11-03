@@ -1,0 +1,22 @@
+name: ci-dedup-eaa-controller-check
+on:
+  pull_request:
+    paths: ['ci-dedup-eaa.mjs', 'ci-dedup-eaa.test.mjs', '.github/workflows/ci-dedup-eaa.yml', '.github/workflows/ci-dedup-eaa-check.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test ci-dedup-eaa.test.mjs
