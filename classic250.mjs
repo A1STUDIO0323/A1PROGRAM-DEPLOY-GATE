@@ -2,6 +2,7 @@ import fs from 'node:fs';import path from 'node:path';import crypto from 'node:c
 export const REPO='A1STUDIO0323/A1PROGRAM-DEPLOY-GATE',SOURCE='8b36b28222354639fb4234522350a1c0f47823aa',VERSION='0.16.250',PLAN='classic-250-8b36b282-20261103';
 export const LANES=['source','mobile20','mobile22','ma','windows'];
 export const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+let failureCapture=null;
 const fail=code=>{throw Error(code)};
 export function validate(p,{now=Date.now(),control=process.env.GITHUB_SHA,planHash=process.env.PLAN_SHA256,raw}={}){
  if(p?.v!==1||p.id!==PLAN||p.sourceSha!==SOURCE||p.version!==VERSION||p.repo!==REPO||p.action!=='CLASSIC250_BUILD'||p.baselineSha!=='95623317665144e36c8292a112f7a4987468623d')fail('C250_PLAN');
@@ -16,12 +17,15 @@ export function safeNames(names){if(!names.length||names.length>25000)fail('C250
 const aad=(p,kind)=>p.id+'|'+p.sourceSha+'|'+kind;
 async function get(name){const r=await fetch('https://github.com/'+REPO+'/releases/download/'+PLAN+'/'+name,{signal:AbortSignal.timeout(180000)});if(r.status!==200)fail('C250_FETCH');return Buffer.from(await r.arrayBuffer());}
 async function readPlan(){const raw=await get('plan.json');if(raw.length>8192)fail('C250_PLAN_SIZE');return validate(JSON.parse(raw),{raw});}
-function exec(bin,args,cwd){return execFileSync(bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
+export const tarTool=()=>process.platform==='win32'?'C:/Program Files/Git/usr/bin/tar.exe':'tar';
+export function tarExec(args,cwd){const win=process.platform==='win32',tool=tarTool();return execFileSync(tool,win?['--force-local','--quoting-style=literal',...args.map(a=>a.replaceAll(String.fromCharCode(92),'/'))]:args,{cwd,env:win?{...process.env,LC_ALL:'C.UTF-8',LANG:'C.UTF-8',PATH:path.dirname(tool)+path.delimiter+(process.env.PATH||'')}:process.env,encoding:'utf8',maxBuffer:8e6}).trim();}
+function exec(bin,args,cwd){return bin==='tar'?tarExec(args,cwd):execFileSync(bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
 export function unpack(file,dest){
  const names=safeNames(exec('tar',['-tf',file]).split(/\r?\n/).map(s=>s.replace(/^\.\//,'' )).filter(Boolean));
  const types=exec('tar',['-tvf',file]).split(/\r?\n/);if(types.some(s=>!/^[-d]/.test(s)))fail('C250_ARCHIVE_LINK');
  if(fs.existsSync(dest))fail('C250_EXISTING_DEST');fs.mkdirSync(dest,{recursive:true});exec('tar',['-xf',file,'-C',dest]);return names;
 }
+export function configureSourceGit(source){if(process.platform==='darwin')exec('git',['config','--local','core.precomposeunicode','true'],source);}
 export function cleanEnv(env){return Object.fromEntries(Object.entries(env).filter(([k])=>!/(TOKEN|SECRET|PASSWORD|PAYLOAD_KEY|PRIVATE_KEY|ASKPASS)/i.test(k)&&!/^GITHUB_(ENV|OUTPUT|PATH|STEP_SUMMARY)$/.test(k)));}
 function commands(lane){
  const n=a=>({bin:process.execPath,args:a}),npm=(cwd,args)=>({bin:process.platform==='win32'?'npm.cmd':'npm',args,cwd});
@@ -55,7 +59,7 @@ async function run(){
  const p=await readPlan(),lane=process.env.LANE;if(!LANES.includes(lane))fail('C250_LANE');const expected=lane==='windows'?'win32':lane==='ma'?'darwin':'linux';if(process.platform!==expected)fail('C250_OS');if(Number(process.versions.node.split('.')[0])!==(lane==='mobile20'?20:22))fail('C250_NODE');
  const key=Buffer.from(process.env.CLASSIC_CI_PAYLOAD_KEY||'','base64'),token=process.env.GH_TOKEN||'';delete process.env.CLASSIC_CI_PAYLOAD_KEY;delete process.env.GH_TOKEN;
  const encrypted=await get('payload.sealed');if(encrypted.length!==p.payloadBytes||hash(encrypted)!==p.payloadSha256)fail('C250_PAYLOAD_HASH');
- const root=fs.mkdtempSync(path.join(process.env.RUNNER_TEMP||process.cwd(),'classic250-')),archive=path.join(root,'source.tar.gz'),source=path.join(root,'source'),out=path.join(root,'result');fs.mkdirSync(out);fs.writeFileSync(archive,unseal(encrypted,key,aad(p,'source')));unpack(archive,source);
+ const root=fs.mkdtempSync(path.join(process.env.RUNNER_TEMP||process.cwd(),'classic250-')),archive=path.join(root,'source.tar.gz'),source=path.join(root,'source'),out=path.join(root,'result');fs.mkdirSync(out);failureCapture=async error=>{const report={id:p.id,sourceSha:p.sourceSha,controlSha:p.controlSha,lane,runId:process.env.GITHUB_RUN_ID,ok:false,message:String(error?.message||error).slice(0,2000),stderr:String(error?.stderr||'').slice(0,16000)};fs.writeFileSync(path.join(out,'setup-failure.json'),JSON.stringify(report));const diagnosticTar=path.join(root,'setup-failure.tar.gz');exec('tar',['-czf',diagnosticTar,'-C',out,'.']);const dir=path.join(process.cwd(),'classic250-encrypted-results');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,lane+'-'+process.env.GITHUB_RUN_ID+'.sealed'),seal(fs.readFileSync(diagnosticTar),key,aad(p,'result|'+lane+'|'+process.env.GITHUB_RUN_ID)));key.fill(0);};fs.writeFileSync(archive,unseal(encrypted,key,aad(p,'source')));unpack(archive,source);configureSourceGit(source);
  if(exec('git',['rev-parse','HEAD'],source)!==p.sourceSha||exec('git',['rev-parse','HEAD^{tree}'],source)!==p.sourceTree||exec('git',['status','--porcelain','--untracked-files=all'],source)!=='')fail('C250_SOURCE');
  const hashes={};for(const name of ['ci.yml','mobile-toolchain.yml','desktop-classic.yml']){hashes[name]=hash(fs.readFileSync(path.join(source,'.github/workflows',name)));if(hashes[name]!==p.workflowHashes[name])fail('C250_WORKFLOW_DRIFT');}
  const env={...cleanEnv(process.env),TZ:'Asia/Seoul',GITHUB_REPOSITORY:'A1STUDIO0323/A1PROGRAM-HOME',GITHUB_SHA:p.sourceSha,GITHUB_WORKSPACE:source,GATE_TEST_ROOT:path.join(source,'.release-gate-test')};
@@ -68,6 +72,6 @@ async function run(){
  const ok=results.length===commands(lane).length&&results.every(r=>r.exit===0),runId=process.env.GITHUB_RUN_ID;
  const receipt={v:1,id:p.id,sourceSha:p.sourceSha,sourceTree:p.sourceTree,version:p.version,controlSha:p.controlSha,runId,lane,platform:process.platform,node:process.versions.node,ok,results,workflowHashes:hashes,files:[]};
  if(ok&&lane==='windows')for(const name of ['A1Runner-Setup-'+VERSION+'.exe','A1Runner-Setup-'+VERSION+'.exe.blockmap','latest.yml','source-'+VERSION+'.tar.gz','classic-build.json']){const file=path.join(source,'desktop/dist',name),bytes=fs.readFileSync(file);receipt.files.push({name,size:bytes.length,sha256:hash(bytes)});fs.writeFileSync(path.join(out,name),bytes);}
- fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(receipt));const bundle=path.join(root,'result.tar.gz');exec('tar',['-czf',bundle,'-C',out,'.']);const result=seal(fs.readFileSync(bundle),key,aad(p,'result|'+lane+'|'+runId));if(result.length>256*1024*1024)fail('C250_RESULT_SIZE');const encryptedDir=path.join(process.cwd(),'classic250-encrypted-results');fs.mkdirSync(encryptedDir,{recursive:true});fs.writeFileSync(path.join(encryptedDir,lane+'-'+runId+'.sealed'),result);key.fill(0);if(!ok)fail('C250_CHECK_FAILED');console.log('C250_LANE_OK '+lane);
+ fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(receipt));const bundle=path.join(root,'result.tar.gz');exec('tar',['-czf',bundle,'-C',out,'.']);const result=seal(fs.readFileSync(bundle),key,aad(p,'result|'+lane+'|'+runId));if(result.length>256*1024*1024)fail('C250_RESULT_SIZE');const encryptedDir=path.join(process.cwd(),'classic250-encrypted-results');fs.mkdirSync(encryptedDir,{recursive:true});fs.writeFileSync(path.join(encryptedDir,lane+'-'+runId+'.sealed'),result);key.fill(0);failureCapture=null;if(!ok)fail('C250_CHECK_FAILED');console.log('C250_LANE_OK '+lane);
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))try{if(process.argv[2]==='check'){await readPlan();await cacheBudget();console.log('C250_PLAN_OK');}else if(process.argv[2]==='run')await run();else if(process.argv[2]==='collect')await collect();else fail('C250_COMMAND');}catch{console.error('C250_EXECUTION_FAILED; encrypted diagnostic result required');process.exitCode=1;}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))try{if(process.argv[2]==='check'){await readPlan();await cacheBudget();console.log('C250_PLAN_OK');}else if(process.argv[2]==='run')await run();else if(process.argv[2]==='collect')await collect();else fail('C250_COMMAND');}catch(error){if(failureCapture)try{await failureCapture(error);}catch{}const code=/^C250_[A-Z0-9_]+$/.test(error?.message||'')?error.message:'C250_EXECUTION_FAILED';console.error(code+'; encrypted diagnostic result required');process.exitCode=1;}
