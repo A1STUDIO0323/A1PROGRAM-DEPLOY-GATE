@@ -17,7 +17,8 @@ export function safeNames(names){if(!names.length||names.length>25000)fail('C250
 const aad=(p,kind)=>p.id+'|'+p.sourceSha+'|'+kind;
 async function get(name){const r=await fetch('https://github.com/'+REPO+'/releases/download/'+PLAN+'/'+name,{signal:AbortSignal.timeout(180000)});if(r.status!==200)fail('C250_FETCH');return Buffer.from(await r.arrayBuffer());}
 async function readPlan(){const raw=await get('plan.json');if(raw.length>8192)fail('C250_PLAN_SIZE');return validate(JSON.parse(raw),{raw});}
-function exec(bin,args,cwd){return execFileSync(bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
+export const tarTool=()=>process.platform==='win32'?path.join(process.env.SystemRoot||'C:/Windows','System32/tar.exe'):'tar';
+function exec(bin,args,cwd){return execFileSync(bin==='tar'?tarTool():bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
 export function unpack(file,dest){
  const names=safeNames(exec('tar',['-tf',file]).split(/\r?\n/).map(s=>s.replace(/^\.\//,'' )).filter(Boolean));
  const types=exec('tar',['-tvf',file]).split(/\r?\n/);if(types.some(s=>!/^[-d]/.test(s)))fail('C250_ARCHIVE_LINK');
