@@ -6,6 +6,7 @@ const fail=code=>{throw Error(code)};
 export function validate(p,{now=Date.now(),control=process.env.GITHUB_SHA,planHash=process.env.PLAN_SHA256,raw}={}){
  if(p?.v!==1||p.id!==PLAN||p.sourceSha!==SOURCE||p.version!==VERSION||p.repo!==REPO||p.action!=='CLASSIC250_BUILD'||p.baselineSha!=='95623317665144e36c8292a112f7a4987468623d')fail('C250_PLAN');
  if(!/^[a-f0-9]{40}$/.test(p.controlSha||'')||control&&p.controlSha!==control||!Number.isFinite(Date.parse(p.expiresAt))||Date.parse(p.expiresAt)<=now||Date.parse(p.expiresAt)-now>72*3600000)fail('C250_CONTROL_EXPIRY');
+ if(!/^[a-f0-9]{40}$/.test(p.sourceTree||'')||!p.workflowHashes||Object.keys(p.workflowHashes).sort().join(',')!=='ci.yml,desktop-classic.yml,mobile-toolchain.yml'||Object.values(p.workflowHashes).some(h=>!/^[a-f0-9]{64}$/.test(h)))fail('C250_SOURCE_MANIFEST');
  if(!/^[a-f0-9]{64}$/.test(p.payloadSha256||'')||!Number.isSafeInteger(p.payloadBytes)||p.payloadBytes<50||p.payloadBytes>256*1024*1024)fail('C250_PAYLOAD');
  if(raw&&(!/^[a-f0-9]{64}$/.test(planHash||'')||hash(raw)!==planHash))fail('C250_PLAN_HASH');return p;
 }
