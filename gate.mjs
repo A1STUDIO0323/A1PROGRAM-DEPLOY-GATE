@@ -25,8 +25,12 @@ export function validatePlan(plan) {
   if(plan.action==='MA_TESTFLIGHT')requireGate(hash(plan.maUnsignedSha256),'E_GATE_ARTIFACT');
   if(['MA_TESTFLIGHT','MG_INTERNAL_ALPHA'].includes(plan.action)) {
     const e=plan.artifactEvidence,ma=plan.action==='MA_TESTFLIGHT';
-    requireGate(e?.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&/^\d+$/.test(e.runId||'')&&Number.isSafeInteger(e.artifactId)&&e.artifactId>0&&
-      /^sha256:[a-f0-9]{64}$/.test(e.artifactDigest||'')&&e.workflow===(ma?'.github/workflows/mobile-ios-build.yml':'.github/workflows/mobile-android.yml'),'E_GATE_BUILD_PROVENANCE');
+    requireGate(e?.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&/^\d+$/.test(e.runId||'')&&e.workflow===(ma?'.github/workflows/mobile-ios-build.yml':'.github/workflows/mobile-android.yml'),'E_GATE_BUILD_PROVENANCE');
+    if(e.transport==='local-job-log-v1'){
+      requireGate(!ma&&plan.version==='0.16.217'&&Number.isSafeInteger(e.jobId)&&e.jobId>0&&e.jobName==='local-build'&&hash(e.jobLogSha256)&&hash(e.receiptSha256)&&hash(e.metaSha256)&&e.unsignedSha256===plan.mgUnsignedSha256,'E_GATE_BUILD_PROVENANCE');
+    }else{
+      requireGate((e.transport===undefined||e.transport==='artifact')&&Number.isSafeInteger(e.artifactId)&&e.artifactId>0&&/^sha256:[a-f0-9]{64}$/.test(e.artifactDigest||''),'E_GATE_BUILD_PROVENANCE');
+    }
   }
   requireGate(plan.alphaTrack === 'alpha' && plan.packageName === 'kr.a1program.m', 'E_GATE_SCOPE');
   requireGate(typeof plan.expiresAt === 'string' && Number.isFinite(Date.parse(plan.expiresAt)), 'E_GATE_EXPIRY');
