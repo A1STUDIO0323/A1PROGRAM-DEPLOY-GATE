@@ -1,8 +1,5 @@
 name: classic250-controller-check
 on:
-  push:
-    branches: ['codex/classic250-free-build-20261103']
-    paths: ['classic250.mjs', 'classic250.test.mjs', '.github/workflows/classic250.yml', '.github/workflows/classic250-check.yml']
   pull_request:
     paths: ['classic250.mjs', 'classic250.test.mjs', '.github/workflows/classic250.yml', '.github/workflows/classic250-check.yml']
 permissions:
