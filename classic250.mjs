@@ -60,9 +60,9 @@ async function run(){
  const hashes={};for(const name of ['ci.yml','mobile-toolchain.yml','desktop-classic.yml']){hashes[name]=hash(fs.readFileSync(path.join(source,'.github/workflows',name)));if(hashes[name]!==p.workflowHashes[name])fail('C250_WORKFLOW_DRIFT');}
  const env={...cleanEnv(process.env),TZ:'Asia/Seoul',GITHUB_REPOSITORY:'A1STUDIO0323/A1PROGRAM-HOME',GITHUB_SHA:p.sourceSha,GITHUB_WORKSPACE:source,GATE_TEST_ROOT:path.join(source,'.release-gate-test')};
  // Public-release reads are needed only by the existing Windows prebuild; token cannot access private source/signing keys.
- if(lane==='windows')env.GH_TOKEN=token;
+ if(lane==='windows'){env.GH_TOKEN=token;const bash='C:/Program Files/Git/bin/bash.exe';if(!fs.existsSync(bash))fail('C250_GIT_BASH');env.PATH=path.dirname(bash)+path.delimiter+(env.PATH||'');}
  const results=[];for(const [i,c]of commands(lane).entries()){
-  const log=fs.openSync(path.join(out,'step-'+i+'.log'),'w');let result;try{result=spawnSync(c.bin,c.args,{cwd:path.resolve(source,c.cwd||'.'),env,stdio:['ignore',log,log],timeout:35*60000,shell:process.platform==='win32'&&c.bin==='npm.cmd'});}finally{fs.closeSync(log);}
+  const log=fs.openSync(path.join(out,'step-'+i+'.log'),'w');let result;try{result=spawnSync(process.platform==='win32'&&c.bin==='bash'?'C:/Program Files/Git/bin/bash.exe':c.bin,c.args,{cwd:path.resolve(source,c.cwd||'.'),env,stdio:['ignore',log,log],timeout:35*60000,shell:process.platform==='win32'&&c.bin==='npm.cmd'});}finally{fs.closeSync(log);}
   results.push({step:i,exit:result.status,error:!!result.error});if(result.status!==0)break;
  }
  const ok=results.length===commands(lane).length&&results.every(r=>r.exit===0),runId=process.env.GITHUB_RUN_ID;
