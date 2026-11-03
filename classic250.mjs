@@ -17,8 +17,9 @@ export function safeNames(names){if(!names.length||names.length>25000)fail('C250
 const aad=(p,kind)=>p.id+'|'+p.sourceSha+'|'+kind;
 async function get(name){const r=await fetch('https://github.com/'+REPO+'/releases/download/'+PLAN+'/'+name,{signal:AbortSignal.timeout(180000)});if(r.status!==200)fail('C250_FETCH');return Buffer.from(await r.arrayBuffer());}
 async function readPlan(){const raw=await get('plan.json');if(raw.length>8192)fail('C250_PLAN_SIZE');return validate(JSON.parse(raw),{raw});}
+export function prependPath(env,dir){const inherited=Object.entries(env).find(([k])=>k.toLowerCase()==='path')?.[1]||'';for(const k of Object.keys(env))if(k.toLowerCase()==='path')delete env[k];env.PATH=dir+path.delimiter+inherited;return env;}
 export const tarTool=()=>process.platform==='win32'?'C:/Program Files/Git/usr/bin/tar.exe':'tar';
-export function tarExec(args,cwd){const win=process.platform==='win32',tool=tarTool();return execFileSync(tool,win?['--force-local','--quoting-style=literal',...args.map(a=>a.replaceAll(String.fromCharCode(92),'/'))]:args,{cwd,env:win?{...process.env,LC_ALL:'C.UTF-8',LANG:'C.UTF-8',PATH:path.dirname(tool)+path.delimiter+(process.env.PATH||'')}:process.env,encoding:'utf8',maxBuffer:8e6}).trim();}
+export function tarExec(args,cwd){const win=process.platform==='win32',tool=tarTool();return execFileSync(tool,win?['--force-local','--quoting-style=literal',...args.map(a=>a.replaceAll(String.fromCharCode(92),'/'))]:args,{cwd,env:win?prependPath({...process.env,LC_ALL:'C.UTF-8',LANG:'C.UTF-8'},path.dirname(tool)):process.env,encoding:'utf8',maxBuffer:8e6}).trim();}
 function exec(bin,args,cwd){return bin==='tar'?tarExec(args,cwd):execFileSync(bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
 export function unpack(file,dest){
  const names=safeNames(exec('tar',['-tf',file]).split(/\r?\n/).map(s=>s.replace(/^\.\//,'' )).filter(Boolean));
@@ -64,7 +65,7 @@ async function run(){
  const hashes={};for(const name of ['ci.yml','mobile-toolchain.yml','desktop-classic.yml']){hashes[name]=hash(fs.readFileSync(path.join(source,'.github/workflows',name)));if(hashes[name]!==p.workflowHashes[name])fail('C250_WORKFLOW_DRIFT');}
  const env={...cleanEnv(process.env),TZ:'Asia/Seoul',GITHUB_REPOSITORY:'A1STUDIO0323/A1PROGRAM-HOME',GITHUB_SHA:p.sourceSha,GITHUB_WORKSPACE:source,GATE_TEST_ROOT:path.join(source,'.release-gate-test')};
  // Public-release reads are needed only by the existing Windows prebuild; token cannot access private source/signing keys.
- if(lane==='windows'){env.GH_TOKEN=token;const bash='C:/Program Files/Git/bin/bash.exe';if(!fs.existsSync(bash))fail('C250_GIT_BASH');env.PATH=path.dirname(bash)+path.delimiter+(env.PATH||'');}
+ if(lane==='windows'){env.GH_TOKEN=token;const bash='C:/Program Files/Git/bin/bash.exe';if(!fs.existsSync(bash))fail('C250_GIT_BASH');prependPath(env,path.dirname(bash));}
  const results=[];for(const [i,c]of commands(lane).entries()){
   const log=fs.openSync(path.join(out,'step-'+i+'.log'),'w');let result;try{result=spawnSync(process.platform==='win32'&&c.bin==='bash'?'C:/Program Files/Git/bin/bash.exe':c.bin,c.args,{cwd:path.resolve(source,c.cwd||'.'),env,stdio:['ignore',log,log],timeout:35*60000,shell:process.platform==='win32'&&c.bin==='npm.cmd'});}finally{fs.closeSync(log);}
   results.push({step:i,exit:result.status,error:!!result.error});if(result.status!==0)break;
