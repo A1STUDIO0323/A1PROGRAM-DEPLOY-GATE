@@ -6,6 +6,10 @@ on:
       plan_sha256:
         description: Reviewed SHA256 of plan.json
         required: true
+      diagnostic_recovery:
+        description: Restore encrypted diagnostics of failed run41638849573 only (does not validate or release product)
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -30,6 +34,7 @@ jobs:
           PLAN_SHA256: ${{ inputs.plan_sha256 }}
           GH_TOKEN: ${{ github.token }}
   build:
+    if: inputs.diagnostic_recovery != true
     needs: validate
     environment: mobile-store-release
     permissions:
@@ -96,34 +101,35 @@ jobs:
         with:
           path: classic250-encrypted-results
           enableCrossOsArchive: true
-          key: classic250-${{ github.run_id }}-source
+          key: classic250-${{ inputs.diagnostic_recovery && '41638849573' || github.run_id }}-source
           fail-on-cache-miss: true
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: classic250-encrypted-results
           enableCrossOsArchive: true
-          key: classic250-${{ github.run_id }}-mobile20
+          key: classic250-${{ inputs.diagnostic_recovery && '41638849573' || github.run_id }}-mobile20
           fail-on-cache-miss: true
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: classic250-encrypted-results
           enableCrossOsArchive: true
-          key: classic250-${{ github.run_id }}-mobile22
+          key: classic250-${{ inputs.diagnostic_recovery && '41638849573' || github.run_id }}-mobile22
           fail-on-cache-miss: true
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: classic250-encrypted-results
           enableCrossOsArchive: true
-          key: classic250-${{ github.run_id }}-ma
+          key: classic250-${{ inputs.diagnostic_recovery && '41638849573' || github.run_id }}-ma
           fail-on-cache-miss: true
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: classic250-encrypted-results
           enableCrossOsArchive: true
-          key: classic250-${{ github.run_id }}-windows
+          key: classic250-${{ inputs.diagnostic_recovery && '41638849573' || github.run_id }}-windows
           fail-on-cache-miss: true
       - name: Publish ciphertext only; never execute decrypted source in this write job
         run: node classic250.mjs collect
         env:
           PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          DIAGNOSTIC_RECOVERY: ${{ inputs.diagnostic_recovery }}
           GH_TOKEN: ${{ github.token }}
