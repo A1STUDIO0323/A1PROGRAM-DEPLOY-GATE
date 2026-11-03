@@ -18,7 +18,7 @@ const aad=(p,kind)=>p.id+'|'+p.sourceSha+'|'+kind;
 async function get(name){const r=await fetch('https://github.com/'+REPO+'/releases/download/'+PLAN+'/'+name,{signal:AbortSignal.timeout(180000)});if(r.status!==200)fail('C250_FETCH');return Buffer.from(await r.arrayBuffer());}
 async function readPlan(){const raw=await get('plan.json');if(raw.length>8192)fail('C250_PLAN_SIZE');return validate(JSON.parse(raw),{raw});}
 export const tarTool=()=>process.platform==='win32'?'C:/Program Files/Git/usr/bin/tar.exe':'tar';
-export function tarExec(args,cwd){const win=process.platform==='win32',tool=tarTool();return execFileSync(tool,win?['--force-local',...args.map(a=>a.replaceAll(String.fromCharCode(92),'/'))]:args,{cwd,env:win?{...process.env,PATH:path.dirname(tool)+path.delimiter+(process.env.PATH||'')}:process.env,encoding:'utf8',maxBuffer:8e6}).trim();}
+export function tarExec(args,cwd){const win=process.platform==='win32',tool=tarTool();return execFileSync(tool,win?['--force-local','--quoting-style=literal',...args.map(a=>a.replaceAll(String.fromCharCode(92),'/'))]:args,{cwd,env:win?{...process.env,LC_ALL:'C.UTF-8',LANG:'C.UTF-8',PATH:path.dirname(tool)+path.delimiter+(process.env.PATH||'')}:process.env,encoding:'utf8',maxBuffer:8e6}).trim();}
 function exec(bin,args,cwd){return bin==='tar'?tarExec(args,cwd):execFileSync(bin,args,{cwd,encoding:'utf8',maxBuffer:8e6}).trim();}
 export function unpack(file,dest){
  const names=safeNames(exec('tar',['-tf',file]).split(/\r?\n/).map(s=>s.replace(/^\.\//,'' )).filter(Boolean));
