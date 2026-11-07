@@ -27,7 +27,8 @@ export function validatePlan(plan) {
     const e=plan.artifactEvidence,ma=plan.action==='MA_TESTFLIGHT';
     requireGate(e?.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&/^\d+$/.test(e.runId||'')&&e.workflow===(ma?'.github/workflows/mobile-ios-build.yml':'.github/workflows/mobile-android.yml'),'E_GATE_BUILD_PROVENANCE');
     if(e.transport==='local-job-log-v1'){
-      requireGate(!ma&&plan.version==='0.16.217'&&Number.isSafeInteger(e.jobId)&&e.jobId>0&&e.jobName==='local-build'&&hash(e.jobLogSha256)&&hash(e.receiptSha256)&&hash(e.metaSha256)&&e.unsignedSha256===plan.mgUnsignedSha256,'E_GATE_BUILD_PROVENANCE');
+      // Any MG version: the HOME stage verified the owner run/job/runner and the log receipt; the gate binds those hashes to the sealed bundle.
+      requireGate(!ma&&Number.isSafeInteger(e.jobId)&&e.jobId>0&&e.jobName==='local-build'&&hash(e.jobLogSha256)&&hash(e.receiptSha256)&&hash(e.metaSha256)&&e.unsignedSha256===plan.mgUnsignedSha256,'E_GATE_BUILD_PROVENANCE');
     }else{
       requireGate((e.transport===undefined||e.transport==='artifact')&&Number.isSafeInteger(e.artifactId)&&e.artifactId>0&&/^sha256:[a-f0-9]{64}$/.test(e.artifactDigest||''),'E_GATE_BUILD_PROVENANCE');
     }
