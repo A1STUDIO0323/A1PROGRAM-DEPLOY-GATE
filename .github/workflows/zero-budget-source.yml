@@ -1,0 +1,94 @@
+name: zero-budget-source
+run-name: ${{ inputs.plan_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      plan_id:
+        description: Reviewed one-use encrypted source-check plan
+        required: true
+      plan_sha256:
+        description: Exact reviewed plan digest
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: zero-budget-source
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'A1STUDIO0323/A1PROGRAM-DEPLOY-GATE' && github.ref == 'refs/heads/main' && github.actor == 'A1STUDIO0323' && github.actor_id == '272439615'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: node --test zero-budget-source.test.mjs
+      - run: node zero-budget-source.mjs check
+        env:
+          PLAN_ID: ${{ inputs.plan_id }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+  build:
+    needs: validate
+    environment: mobile-store-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      result_sha256: ${{ steps.source.outputs.result_sha256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Execute exact encrypted source checks; keep logs encrypted
+        id: source
+        run: node zero-budget-source.mjs run
+        env:
+          PLAN_ID: ${{ inputs.plan_id }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          ZERO_BUDGET_PLAN_SHA256: ${{ vars.ZERO_BUDGET_PLAN_SHA256 }}
+          ZERO_BUDGET_SOURCE_KEY: ${{ secrets.ZERO_BUDGET_SOURCE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      - name: Transfer ciphertext within checked free cache capacity
+        if: always() && steps.source.outputs.result_sha256 != ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: zero-source-results
+          key: zero-source-${{ github.run_id }}
+  collect:
+    needs: [validate, build]
+    if: always() && needs.validate.result == 'success' && needs.build.outputs.result_sha256 != ''
+    environment: mobile-store-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: zero-source-results
+          key: zero-source-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Authenticate receipt and publish only ciphertext; never execute source
+        run: node zero-budget-source.mjs collect
+        env:
+          PLAN_ID: ${{ inputs.plan_id }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          ZERO_BUDGET_PLAN_SHA256: ${{ vars.ZERO_BUDGET_PLAN_SHA256 }}
+          ZERO_BUDGET_SOURCE_KEY: ${{ secrets.ZERO_BUDGET_SOURCE_KEY }}
+          RESULT_SHA256: ${{ needs.build.outputs.result_sha256 }}
+          GH_TOKEN: ${{ github.token }}
