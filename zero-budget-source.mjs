@@ -38,11 +38,16 @@ async function download(id,name,maxBytes) {
   const response=await fetch('https://github.com/'+REPO+'/releases/download/'+id+'/'+name,{signal:AbortSignal.timeout(120000)});
   if(!response.ok)fail('E_ZERO_DOWNLOAD');
   if(Number(response.headers.get('content-length'))>maxBytes)fail('E_ZERO_SIZE');
-  const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>maxBytes)fail('E_ZERO_SIZE');return bytes;
+  const reader=response.body.getReader(),chunks=[];let total=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;total+=value.length;
+    if(total>maxBytes){await reader.cancel();fail('E_ZERO_SIZE');}chunks.push(value);}
+  return Buffer.concat(chunks);
 }
 async function readPlan() {
   const raw=await download(process.env.PLAN_ID,'plan.json',16384);
-  return validatePlan(JSON.parse(raw),{raw,control:process.env.GITHUB_SHA,expectedHash:process.env.PLAN_SHA256});
+  const p=JSON.parse(raw);
+  return validatePlan(p,{raw,control:process.env.GITHUB_SHA,expectedHash:process.env.PLAN_SHA256,
+    now:process.argv[2]==='collect'?Date.parse(p.createdAt)+1:Date.now()});
 }
 function requireContext() {
   const e=process.env;
@@ -55,11 +60,19 @@ async function api(endpoint,options={}) {
     Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json',...options.headers},signal:AbortSignal.timeout(30000)});
   if(!response.ok)fail('E_ZERO_API');return response.json();
 }
-async function validateExecution(p) {
-  const runs=await api('repos/'+REPO+'/actions/workflows/zero-budget-source.yml/runs?event=workflow_dispatch&per_page=100&created='+encodeURIComponent('>='+p.createdAt));
+export function selectOriginalRun(p,runs,runId) {
   if(!Array.isArray(runs.workflow_runs)||runs.total_count>100)fail('E_ZERO_HISTORY_LIMIT');
   const matches=runs.workflow_runs.filter(run=>run.display_title===p.id);
-  if(matches.length!==1||String(matches[0].id)!==process.env.GITHUB_RUN_ID||matches[0].head_sha!==p.controlSha)fail('E_ZERO_DUPLICATE');
+  if(matches.length!==1||String(matches[0].id)!==String(runId)||matches[0].head_sha!==p.controlSha)fail('E_ZERO_DUPLICATE');
+  const run=matches[0],created=Date.parse(run.created_at);
+  if(run.actor?.login!=='A1STUDIO0323'||run.actor?.id!==272439615||run.event!=='workflow_dispatch'||
+    run.head_branch!=='main'||run.run_attempt!==1||!Number.isFinite(created)||
+    created<Date.parse(p.createdAt)-60000||created>=Date.parse(p.expiresAt))fail('E_ZERO_RUN_IDENTITY');
+  return run;
+}
+async function validateExecution(p) {
+  const runs=await api('repos/'+REPO+'/actions/workflows/zero-budget-source.yml/runs?event=workflow_dispatch&per_page=100&created='+encodeURIComponent('>='+p.createdAt));
+  selectOriginalRun(p,runs,process.env.GITHUB_RUN_ID);
   const cache=await api('repos/'+REPO+'/actions/cache/usage');
   if(!Number.isSafeInteger(cache.active_caches_size_in_bytes)||cache.active_caches_size_in_bytes>8*1024**3)fail('E_ZERO_FREE_CACHE_CAPACITY');
 }

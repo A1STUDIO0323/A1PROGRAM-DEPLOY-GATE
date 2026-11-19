@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validatePlan,childEnvironment,sha256} from './zero-budget-source.mjs';
+import {validatePlan,childEnvironment,sha256,selectOriginalRun} from './zero-budget-source.mjs';
 import {seal,unseal} from './ci-dedup-eaa.mjs';
 const now=Date.UTC(2026,10,20),p={schema:1,action:'SOURCE_CHECK',id:'zero-source-20261120-1234567812345678',
  sourceRepo:'A1STUDIO0323/A1PROGRAM-HOME',workflow:'.github/workflows/ci.yml',sourceSha:'1'.repeat(40),
@@ -25,6 +25,17 @@ test('changing a single reviewed plan byte, authenticated ciphertext or AAD is r
  const corrupt=Buffer.from(data);corrupt[corrupt.length-1]^=1;
  assert.throws(()=>unseal(corrupt,key,'one-plan'));
  assert.throws(()=>unseal(data,key,'another-plan'));
+});
+test('duplicate, rerun, other-owner and post-expiry workflows cannot claim a source result',()=>{
+ const run={id:123,display_title:p.id,head_sha:p.controlSha,head_branch:'main',run_attempt:1,event:'workflow_dispatch',
+  actor:{login:'A1STUDIO0323',id:272439615},created_at:new Date(now+1000).toISOString()};
+ assert.equal(selectOriginalRun(p,{total_count:1,workflow_runs:[run]},123),run);
+ assert.throws(()=>selectOriginalRun(p,{total_count:2,workflow_runs:[run,run]},123));
+ for(const change of [{run_attempt:2},{head_branch:'other'},{head_sha:'7'.repeat(40)},
+  {actor:{login:'A1STUDIO0323',id:1}},{event:'pull_request'},{created_at:p.expiresAt}]) {
+  assert.throws(()=>selectOriginalRun(p,{total_count:1,workflow_runs:[{...run,...change}]},123));
+ }
+ assert.throws(()=>selectOriginalRun(p,{total_count:101,workflow_runs:[run]},123));
 });
 test('source processes receive no GitHub, Actions, signing, store or encryption credentials/control channels',()=>{
  const parent={PATH:'/node/bin:/bin',HOME:'/home/runner',GH_TOKEN:'never-child',GITHUB_TOKEN:'never-child',
