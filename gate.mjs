@@ -25,12 +25,18 @@ export function validatePlan(plan) {
   if(plan.action==='MA_TESTFLIGHT')requireGate(hash(plan.maUnsignedSha256),'E_GATE_ARTIFACT');
   if(['MA_TESTFLIGHT','MG_INTERNAL_ALPHA'].includes(plan.action)) {
     const e=plan.artifactEvidence,ma=plan.action==='MA_TESTFLIGHT';
+    if(e?.transport==='codemagic-v1'){
+      // MA only: the HOME stage verified the owner's Codemagic build record (app, yaml workflow, free M2, main commit, finished, no remote access)
+      // and downloaded the exact artifact bytes; the gate binds those hashes to the sealed bundle. No GitHub run id exists on this path.
+      requireGate(ma&&e.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&e.workflow==='codemagic.yaml#ddk-ma-unsigned'&&/^[a-f0-9]{24}$/.test(e.buildId||'')&&/^[a-f0-9]{24}$/.test(e.appId||'')&&e.instanceType==='mac_mini_m2'&&e.unsignedSha256===plan.maUnsignedSha256&&hash(e.metaSha256)&&hash(e.buildRecordSha256)&&e.runId===undefined,'E_GATE_BUILD_PROVENANCE');
+    }else{
     requireGate(e?.repository==='A1STUDIO0323/A1PROGRAM-HOME'&&e.sourceSha===plan.sourceSha&&/^\d+$/.test(e.runId||'')&&e.workflow===(ma?'.github/workflows/mobile-ios-build.yml':'.github/workflows/mobile-android.yml'),'E_GATE_BUILD_PROVENANCE');
     if(e.transport==='local-job-log-v1'){
       // Any MG version: the HOME stage verified the owner run/job/runner and the log receipt; the gate binds those hashes to the sealed bundle.
       requireGate(!ma&&Number.isSafeInteger(e.jobId)&&e.jobId>0&&e.jobName==='local-build'&&hash(e.jobLogSha256)&&hash(e.receiptSha256)&&hash(e.metaSha256)&&e.unsignedSha256===plan.mgUnsignedSha256,'E_GATE_BUILD_PROVENANCE');
     }else{
       requireGate((e.transport===undefined||e.transport==='artifact')&&Number.isSafeInteger(e.artifactId)&&e.artifactId>0&&/^sha256:[a-f0-9]{64}$/.test(e.artifactDigest||''),'E_GATE_BUILD_PROVENANCE');
+    }
     }
   }
   requireGate(plan.alphaTrack === 'alpha' && plan.packageName === 'kr.a1program.m', 'E_GATE_SCOPE');
